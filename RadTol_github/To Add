@@ -1,0 +1,37 @@
+probeTest 
+	- add raise Keyboard interrupts
+	- add print statements before height check
+
+Read in dektak data
+Add timestamps to everything
+Figure out IV if possible
+Time and date on output file
+Hanging ?
+Closing and reopening connection after every measurement ?
+Add 30second probe and keithley tests before starting ?
+Print thicknesses to double check
+
+Delay time on IV doubling for some reason
+
+Timing mismatch between me and Albanik
+
+Commenting properly
+Buffer issue
+
+Change clearing buffer procedure 
+
+File safety feature to stop override
+Print device name at the start
+Store times to run in text file ?
+Plot style - latex, same axes ?
+Shaded different standoff for dynamics
+Display params after iv and allow users to change ?
+
+Read me file on procedure
+
+Interlock on before DG027-2, no data above 38V. Data accurately represents this but filenames are wrong
+Change all filenames to be consistent !!
+
+Reading in data error if terminated unexpectedly	
+
+Cannot move probe to x or y limits before starting the script - gives 'out of working area' error
