@@ -37,17 +37,22 @@ Z_OFFSET = Z_CAL_P1[1] - (Z_SLOPE * Z_CAL_P1[0])
 # ==============================================================================
 # RUN MAIN SEQUENCE IF THIS FILE IS EXECUTED DIRECTLY
 # CHANGE PARAMETERS AS NEEDED
-parameters = {
-    "Output_Directory": "", #Add data output directory here
-    "DUT_Name": "Device_A1",
-    "Scope_Sites": ["RAD", "AWAY"],
-    "Standoffs": [1.5, 5.0, 13.0], 
-    "SMUs": ["SMU1", "SMU2"], 
-    "IV_Range": (-5, 5, 0.5), 
-    "PV_IV_Range": (-10, 10, 0.5),
-    "Dynamic_Voltages": [5, 10] 
-}
+# parameters = {
+#     "Output_Directory": "", #Add data output directory here
+#     "DUT_Name": "Device_A1",
+#     "Scope_Sites": ["RAD", "AWAY"],
+#     "Standoffs": [1.5, 5.0, 13.0], 
+#     "SMUs": ["SMU1", "SMU2"], 
+#     "IV_Range": (-5, 5, 0.5), 
+#     "PV_IV_Range": (-10, 10, 0.5),
+#     "Dynamic_Voltages": [5, 10] 
+# }
 
+DUT = "Device_A1" # Update this for file naming
+IV_Range = (-30, 30, 0.2) # Start, Stop, Step for IV sweep
+PV_IV_Range = (-1, 3, 0.02) # Start, Stop, Step for PV IV sweep
+Standoffs = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13] # Standoff distances in mm for dynamics test
+DYNAMIC_VOLTAGES = [1, 3, 5, 10, 30] # Voltages for dynamics test
 # ==============================================================================
 # IMAGING CONFIGURATION
 # ==============================================================================

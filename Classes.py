@@ -56,161 +56,143 @@ class KeithleyController:
     def __init__(self, resource_str):
         self.resource_str = resource_str
         self.inst = None
+        self.rm = None
         self.connected = False
         self.smu_map = {"SMU1": 1, "SMU2": 2, "SMU3": 3, "SMU4": 4}
 
     def connect(self):
         if SIMULATION_MODE:
+            print(f"[KEITHLEY] Simulated Connection to {self.resource_str}")
             self.connected = True
-            print(f"[KEITHLEY] Simulated Connection")
             return
+
         try:
-            rm = pyvisa.ResourceManager()
-            self.inst = rm.open_resource(self.resource_str)
-            self.inst.write('UL')
-            self.inst.write('DR 1')
-            self.inst.timeout = 60000
-            self.connected = True
-            print(f"[KEITHLEY] Connected")
+            self.rm = pyvisa.ResourceManager('@py')
+            self.inst = self.rm.open_resource(self.resource_str)
+            self.inst.write_termination = '\0'
+            self.inst.read_termination = '\0'
         except Exception as e:
             raise ConnectionError(f"Failed to connect to Keithley: {e}")
-
-    def configure_cviv_routing(self, smu_in_str, port_out_int):
-        smu_id = self.smu_map[smu_in_str]
-        if SIMULATION_MODE:
-            print(f"[KEITHLEY] CVIV: Routing {smu_in_str} -> Port {port_out_int}")
-            return
-        cmd = f'EX "cviv_connect({smu_id}, {port_out_int})"'
-        try:
-            self.inst.write(cmd)
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"[KEITHLEY] Error configuring CVIV: {e}")
-
-    def _get_compliance(self, voltage_limit):
-        if abs(voltage_limit) > 20: return 10e-3
-        return 100e-3
-
-    def setup_measurement_mode(self, smu_name):
-        """Enable channel and set to measure Current/Voltage."""
-        if SIMULATION_MODE: return
-        smu_id = self.smu_map[smu_name]
-        self.inst.write(f'CN {smu_id}')
-        # Set to Measure Current (standard mode)
-        # We can query Voltage later using MV
-        self.inst.write(f'SM {smu_id}, I') 
-
-    def measure_spot(self, smu_name):
-        """Returns (Voltage, Current) for a single SMU."""
-        smu_id = self.smu_map[smu_name]
-        if SIMULATION_MODE:
-            return (5.0, 1.2e-6) # Fake data
-
-        # MV = Measure Voltage, MI = Measure Current
-        # Note: 'ME' measures the parameter defined by 'SM' (usually Current)
-        # To get both, we specifically query both.
-        try:
-            v_val = float(self.inst.query(f'MV {smu_id}'))
-            i_val = float(self.inst.query(f'MI {smu_id}'))
-            return (v_val, i_val)
-        except:
-            return (0.0, 0.0)
-
-    def run_software_sweep(self, smu_sig, smu_gnd, start_v, stop_v, step_v):
+    
+    def wait_completion(self, print_output=False):
         """
-        Iterates voltage in Python to ensure clean data capture from BOTH SMUs.
+        This is a loop to check the status of the test. The SP command returns :
+        - 0 or 1 when the test is done running
+        - 16 while the test is running (busy)
+        These are bit wise according to page 3-3 of the manual
+
+        Makes sure that any further actions (eg reading data) are undertaken after all data running is finished
         """
-        smu_sig_id = self.smu_map[smu_sig]
-        smu_gnd_id = self.smu_map[smu_gnd]
+        while True:
+            status = self.inst.query("SP")
+
+            # Continues loop until the test is complete
+            # Casting the status string to int makes the comparison simpler since it ignores the termination characters
+            if int(status) in [0, 1]:
+                print("Completed task.")
+                break
+
+            # Continuously prints the status of the test every second to the terminal
+            if print_output:
+                print(f"Status: {status}")
+            time.sleep(10)
+    
+    def configure_CVIV(self):
+        """
+        To configure channels to SMU. Example given in manual page 4-13.
+        """
+
+        self.inst.write('UL')                            # Set into user library mode for user modules on KULT
+        _ = self.inst.read()                             # 'eats' the ACK to remove it from the buffer
+
+        self.inst.query("EX cvivulib cviv_configure(CVIV1, 1, 1, 1, 0, 0, Bias, Gnd, :(, :(, IV, )")
+        self.wait_completion()
+        print("CVIV configure complete.")
+
+        # Can use this to print the details of any package / module in KULT - see manual page 4-9
+        # cviv_config_description = self.inst.query("GD cvivulib cviv_configure")
+        # print(cviv_config_description)
+
+    def measurement_dc_helper(self, v_bias):
+
+        self.inst.query("BC")  # Clear buffer
+        # self.inst.query("ERRORLASTCLEAR")
+        self.inst.query("RST")  # Full instrument reset (SMUs, PGUs, PMUs, CVUs)
+        self.inst.query("*CLS")
+        time.sleep(0.5)
+        self.inst.query("DE")  # Enter channel definition page
+        self.inst.query("CH1")  # Disable ALL channels first (safety)
+        self.inst.query("CH2")  # Handles 4+ SMU systems too
+        time.sleep(0.1)  # Let reset settle
+
+        self.inst.query("DE")
+        # Channel 1. Voltage Name = AV, Current Name = AI, Voltage Source Mode, Constant source function
+        self.inst.query("CH 1, 'AV', 'AI', 1, 3")
+        # Channel 2. Voltage Name = BV, Current Name = BI, Voltage Source Mode, Constant source function
+        self.inst.query("CH 2, 'BV', 'BI', 1, 3")
+
+        self.inst.query("SS")
+        # Constant voltage, SMU channel 1, 10 V output value, 100 mA current compliance
+        self.inst.query(f"VC 1, {v_bias}, 1e-8")
+        # Constant voltage, SMU channel 2, 0 V output value, 100 mA current compliance
+        self.inst.query("VC 2, 0, 0.1")
+        self.inst.query("HT 0")
+        self.inst.query("DT 0")
+        self.inst.query("IT 2")
+        self.inst.query("RS 5")
+        self.inst.query("RG 1, 10e-9")                # 1e-12
+        # self.inst.query("RG 2, 1e-7")
+
+        self.inst.query("SM DM2")
+        self.inst.query("LI 'AV', 'AI'")
+        # self.inst.query("IN 0.01")  # Interval time - equivalent to 'interval' on Clarius
+        self.inst.query("NR 4096")  # Number of points - equivalent to 'number of samples' on Clarius
+
+        # self.inst.query("DM 2")
+
+        # inst.query("DM 1")
+        # # Configures the x-axis of the graph to plot time domain values from 0 to 300 seconds
+        # inst.query("XT 0, 300")
+        # # Configures the y1-axis of the graph to Channel 1 Voltage, minimum value of 0 V, maximum value of 15 mV
+        # inst.query("YA 'AI', 1, 0, 1e-9")
         
-        # Calculate voltage list
-        # We use numpy or simple loop to handle float steps accurately
-        steps = int(abs(stop_v - start_v) / abs(step_v)) + 1
-        voltages = np.linspace(start_v, stop_v, steps)
+    def retrieve_data(self, variables):
+        """
+        Helps with reading in data from the instrument and outputs it into a numpy array in a similar style to how data is
+        normally outputted using Clarius.
 
-        compliance = self._get_compliance(max(abs(start_v), abs(stop_v)))
-        
-        print(f"[KEITHLEY] Software Sweep {smu_sig} ({start_v}V to {stop_v}V)")
-        
-        results = [] # Stores [V_Set, V1, I1, V2, I2]
+        At the moment this reads line by line as that is what all the examples use. In principle there is a command to read
+        out the full dataset 'DO' (manual page 5-38) but I could not get it to output timestamps for whatever reason.
+        """
 
-        if SIMULATION_MODE:
-            time.sleep(0.5)
-            # Fake Data: [V_Set, V_Sig, I_Sig, V_Gnd, I_Gnd]
-            return [[v, v, v*1e-6, 0, -v*1e-6] for v in voltages]
+        all_data = []
 
-        # 1. Enable Both
-        self.inst.write(f'CN {smu_sig_id}')
-        self.inst.write(f'CN {smu_gnd_id}')
-        
-        # 2. Bias Ground to 0V
-        self.inst.write(f'DV {smu_gnd_id}, 0, 0, 0.1')
+        # Sets a flag for later. Essentially the way continuous time measurements are controlled the data needs to be read
+        # before data taking stops so this makes sure all arrays are of equal length. Otherwise, while variable_1's data is
+        # being read, variable_2 has managed to gather some more data and creates a mismatch.
+        index_final = None
 
-        # 3. Loop
-        for v in voltages:
-            # Apply Voltage to Signal SMU
-            self.inst.write(f'DV {smu_sig_id}, 0, {v}, {compliance}')
-            
-            # Small delay for settling (software overhead might be enough, but added for safety)
-            # time.sleep(0.01) 
-            
-            # Measure Both
-            # We measure Signal (V, I) and Ground (V, I)
-            v1, i1 = self.measure_spot(smu_sig)
-            v2, i2 = self.measure_spot(smu_gnd)
-            
-            results.append([v, v1, i1, v2, i2])
+        for variable in variables:                                  # For each variable you want to output data
 
-        # 4. Turn off (Bias 0)
-        self.inst.write(f'DV {smu_sig_id}, 0, 0, 0.1')
-        
-        return results
+            index = 1                                               # Need to read each line by index
+            data_list = []
+            while True:
+                if index == index_final:
+                    break
+                data = self.inst.query(f"RD '{variable}', {index}")      # Retrieve data
+                data = float(data.strip('\r\n'))                    # Format data into machine usable
+                if data == 0:                                       # Flag to stop when all measured data is accounted for
+                    if variable == variables[0]:                    # Flag based on first variable's data parsed (usually time)
+                        index_final = index
+                    break
+                data_list.append(float(data))
+                index += 1                                          # Increment to get next point
 
-    def start_dynamic_sampling(self, smu_sig, smu_gnd, voltage, stop_event, data_container):
-        smu_sig_id = self.smu_map[smu_sig]
-        smu_gnd_id = self.smu_map[smu_gnd]
-        compliance = self._get_compliance(voltage)
-        
-        if SIMULATION_MODE:
-            start_time = time.time()
-            while not stop_event.is_set():
-                elapsed = time.time() - start_time
-                # Fake: Time, V1, I1, V2, I2
-                data_container.append([elapsed, voltage, 1e-6, 0, -1e-6])
-                time.sleep(0.1)
-            return
+            all_data.append(data_list)
 
-        try:
-            # Enable Both
-            self.inst.write(f'CN {smu_sig_id}')
-            self.inst.write(f'CN {smu_gnd_id}')
-            
-            # Force Voltage
-            self.inst.write(f'DV {smu_gnd_id}, 0, 0, 0.1') # Ground
-            self.inst.write(f'DV {smu_sig_id}, 0, {voltage}, {compliance}') # Signal
-            
-            start_time = time.time()
-            
-            while not stop_event.is_set():
-                # Measure Sequence
-                v1, i1 = self.measure_spot(smu_sig)
-                v2, i2 = self.measure_spot(smu_gnd)
-                
-                elapsed = time.time() - start_time
-                
-                # Store: Time, V1, I1, V2, I2
-                data_container.append([elapsed, v1, i1, v2, i2])
-                
-                # Sampling rate control (adjust as needed)
-                time.sleep(0.05)
-                
-        except Exception as e:
-            print(f"Error in measurement thread: {e}")
-        finally:
-            self.inst.write(f'DV {smu_sig_id}, 0, 0, 0.1')
-            self.inst.write(f'CL {smu_sig_id}')
-            self.inst.write(f'CL {smu_gnd_id}')
+        all_data = np.vstack(all_data).T
 
+        return all_data
 # ==============================================================================
 # 4. CLASS: SENTIO PROBER CONTROLLER
 # ==============================================================================
