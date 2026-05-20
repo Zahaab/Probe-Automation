@@ -57,7 +57,7 @@ def main_Dynamic():
                 print(f"\n\nStarting Dynamic measurement at standoff {standoff} mm and voltage {voltage} V")
                 pc.move_to_site("AWAY")
                 start_time = time.perf_counter()
-                dynamics_measurement(kc, voltage, standoff1=standoff, standoff2=standoff, file_name=f'{file_name_base}Dynamic_{standoff}mm_{voltage}V')
+                dynamics_measurement(pc, kc, voltage, standoff1=standoff, standoff2=standoff, file_name=f'{file_name_base}Dynamic_{standoff}mm_{voltage}V')
                 end_time = time.perf_counter()
                 print(f"Time taken for standoff {standoff} mm and voltage {voltage} V: {end_time - start_time:.2f} seconds")
                 
