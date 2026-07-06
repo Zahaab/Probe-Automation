@@ -1,0 +1,54 @@
+{
+    "output_directory": "Raw Data/DG-PCB001",
+    "device_name": "DG-PCB001",
+    "run_iv": true,
+    "run_pv": false,
+    "run_td_voltage": true,
+    "run_td_standoff": true,
+    "iv_range": [
+        -30,
+        30,
+        0.5
+    ],
+    "iv_standoffs": [
+        7.5
+    ],
+    "iv_type": "both",
+    "pv_iv_range": [
+        -1,
+        3,
+        0.02
+    ],
+    "pv_iv_standoffs": [],
+    "td_repeats": 3,
+    "td_time_delay": 30,
+    "td_voltage_standoffs": [
+        7.5
+    ],
+    "td_voltage_voltages": [
+        -70,
+        -30,
+        -10,
+        -5,
+        -1,
+        0,
+        1,
+        5,
+        10,
+        30,
+        70
+    ],
+    "td_standoff_voltages": [
+        30
+    ],
+    "td_standoff_standoffs": [
+        1.5,
+        3.5,
+        5.5,
+        7.5,
+        9.5,
+        11.5,
+        13.5
+    ],
+    "measurement_error": 1e-14
+}
