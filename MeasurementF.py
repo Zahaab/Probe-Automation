@@ -1,15 +1,7 @@
 import pyvisa
 import time
-import threading
-import csv
-import os
-import datetime
 import numpy as np
 import matplotlib.pyplot as plt
-from sentio_prober_control.Sentio.ProberSentio import SentioProber
-from Config import MAX_VOLTAGE, MAX_STANDOFF_MM, MIN_STANDOFF_MM, SIMULATION_MODE, Z_OFFSET, Z_SLOPE, IMAGING_SITES, IMAGING_OUTPUT_DIR, TARGET_ZOOM_INDEX
-from Classes import ProberController, KeithleyController
-from RadTol_github.keithleyTest import measurement_dc_helper
 # ==============================================================================
 # 5. CORE TEST FUNCTIONS
 # ==============================================================================
@@ -57,72 +49,18 @@ def plot_IV(file_name, data, save_fig=False):
 
     # plt.show()
 
-def standoff_measurement(pc_obj, kei_obj, heights, v_bias, file_name):
-    """Runs measurement for 1 height set (3 heights) - 3 on/off intervals with 45 second intervals"""
 
-    pc_obj.move_to_site("AWAY")
-    time.sleep(1)
-
-    kei_obj.measurement_dc_helper(v_bias)
-
-    try:
-
-        kei_obj.inst.query("MD")
-        kei_obj.inst.query("ME 1")  # Start measurement
-
-        while True:
-            query = kei_obj.inst.query("SP")  # Check measurement is running, should return 16 = busy
-            if int(query) >= 16:
-                break
-            print(query)
-
-        print(f"\n------------------- Starting Standoff Variation (height set = {heights}, voltage = {v_bias}) -------------------- ")
-        # print("(Check field is set to +/- 1V/um (based on thickness in Dektak))")
-
-        for height in heights:
-            pc_obj.move_to_site("AWAY")
-            pc_obj.move_z_mm(height)
-            time.sleep(40)
-
-            pc_obj.move_to_site("RAD")
-            time.sleep(44)
-
-        pc_obj.move_to_site("AWAY")
-        time.sleep(40)
-
-        query = kei_obj.inst.query("SP")  # Check measurement is running, should return 16 = busy
-        if int(query) < 16:
-            print('Measurement stopped unexpectedly, possible error')
-
-        # Data has to be taken in this order for timed measurements since closing the measurement (ME 4) clears the buffer
-        # so no data can be read out. This is why the index_final flag is needed in the retrieve_data function.
-        data_full = kei_obj.retrieve_data(["CH1T", "AI", "AV"])
-
-        print("\n------------------- Standoff Variation Script Complete -------------------- ")
-
-    except KeyboardInterrupt:
-        print("Interrupted by user, program quit")
-
-    finally:
-        # Mainly only useful in debugging mode so that the connection is closed and data isn't being fed into the buffer
-        kei_obj.inst.query("ME 4")  # Abort / Close measurement
-
-    # wait_completion(inst_obj)  # Should be redundant since measurement is finished but just incase
-
-    save_data(file_name, data_full, ["Time", "AI", "AV"])
-    plot_It(file_name, data_full, save_fig=True)
-
-    return
-
-
-def dynamics_measurement(pc_obj, kei_obj, v_bias, standoff1, standoff2, file_name):
+def dynamics_measurement(pc_obj, kei_obj, v_bias, standoff, file_name, repeats=3, time_delay=30):
     """Runs measurement for 1 bias voltage at 1 standoff - 2 on/off with 30 sec intervals"""
 
     pc_obj.move_to_site("AWAY")
-    pc_obj.move_z_mm(standoff1)
+    pc_obj.move_z_mm(standoff)
     time.sleep(1)
 
-    kei_obj.measurement_dc_helper(v_bias)
+    if v_bias == np.nan:
+        kei_obj.measurement_dc_helper(0)
+    else:
+        kei_obj.measurement_dc_helper(v_bias)
 
     try:
 
@@ -135,23 +73,17 @@ def dynamics_measurement(pc_obj, kei_obj, v_bias, standoff1, standoff2, file_nam
                 break
             print(query)
 
-        print(f"\n------------------- Starting Time Dynamics (voltage = {v_bias}) -------------------- ")
-
-        if v_bias == 0:
-            print("Waiting 30 seconds")
-            time.sleep(30)
+        if v_bias == np.nan:
+            time.sleep(time_delay)
+            print("Waiting 30s to reset voltage measurements")
         else:
             pc_obj.move_to_site("AWAY")
-            time.sleep(30)
-            pc_obj.move_to_site("RAD")
-            time.sleep(30)
-            pc_obj.move_to_site("AWAY")
-            pc_obj.move_z_mm(standoff2)
-            time.sleep(30)
-            pc_obj.move_to_site("RAD")
-            time.sleep(30)
-            pc_obj.move_to_site("AWAY")
-            time.sleep(30)
+            time.sleep(time_delay-2)
+            for _ in range(repeats):
+                pc_obj.move_to_site("RAD")
+                time.sleep(time_delay-1)
+                pc_obj.move_to_site("AWAY")
+                time.sleep(time_delay-2)
 
         query = kei_obj.inst.query("SP")  # Check measurement is running, should return 16 = busy
         if int(query) < 16:
@@ -161,7 +93,7 @@ def dynamics_measurement(pc_obj, kei_obj, v_bias, standoff1, standoff2, file_nam
         # so no data can be read out. This is why the index_final flag is needed in the retrieve_data function.
         data_full = kei_obj.retrieve_data(["CH1T", "AI", "AV"])
 
-        print("\n------------------- Time Dynamics Complete -------------------- ")
+        # print("\n------------------- Time Dynamics Complete -------------------- ")
 
     except KeyboardInterrupt:
         print("Interrupted by user, program quit")
@@ -177,14 +109,31 @@ def dynamics_measurement(pc_obj, kei_obj, v_bias, standoff1, standoff2, file_nam
 
     return
 
-def generate_voltage_sweep(sweep_params, dual_sweep=False):
+def generate_voltages_sweep(sweep_params, dual_sweep=False):
+
     start, stop, step = sweep_params
-    forward_sweep = np.arange(start, stop + (step / 2), step) 
+    forward_sweep = np.arange(start, stop + (step / 2), step)
     if not dual_sweep:
-        return forward_sweep       
+        return forward_sweep
     else:
-        backward_sweep = forward_sweep[::-1][1:] 
+        backward_sweep = forward_sweep[::-1][1:]
         return np.concatenate((forward_sweep, backward_sweep))
+
+def generate_voltages_step(voltages_base, no_repeats=3, dual_sweep=False):
+
+    if type(voltages_base) == list:
+        voltages_base = np.array(voltages_base)
+
+    voltages_forward = np.concatenate([np.repeat(a, no_repeats)
+        for a in (voltages_base, voltages_base[::-1][1:], -voltages_base[1:], (-voltages_base)[::-1][1:])])
+    if dual_sweep:
+        voltages_reverse = np.concatenate([np.repeat(a, no_repeats)
+            for a in (-voltages_base[1:], (-voltages_base)[::-1][1:])])
+        voltages = np.concatenate((voltages_forward, voltages_reverse))
+    else:
+        voltages = voltages_forward
+
+    return voltages
 
 def iv_measurement(kei_obj, voltage_array, file_name):
 
@@ -236,13 +185,9 @@ def iv_measurement(kei_obj, voltage_array, file_name):
         kei_obj.inst.query("MD")
         kei_obj.inst.query("ME 1")  # Start measurement
 
-        print(f"\n------------------- Starting IV Test -------------------- ")
-
         kei_obj.wait_completion()  # Wait of the sweep to finish
 
         data_full = kei_obj.retrieve_data(["AI", "AV"])
-
-        print("\n------------------- IV Test Complete -------------------- ")
 
     except KeyboardInterrupt:
         print("Interrupted by user, program quit")
